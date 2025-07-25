@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Component Sandbox</title>
+    <style>
+        /* Basic reset and ensure component fills container */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh; /* Ensure it takes full height of iframe */
+            background-color: #fff; /* Default background for preview */
+        }
+        #root {
+            width: 100%;
+            height: 100%;
+            display: flex; /* Helps center content if it's smaller */
+            justify-content: center;
+            align-items: center;
+            flex-direction: column; /* Allows vertical stacking */
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- React and ReactDOM libraries -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for on-the-fly JSX/TSX transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script type="text/babel">
+        // Destructure React and ReactDOM globals
+        const { useState, useEffect, createElement } = React;
+        const { render } = ReactDOM;
+
+        /**
+         * ComponentRenderer dynamically renders JSX and applies CSS.
+         * It handles two main types of JSX input:
+         * 1. Raw JSX fragments (e.g., `<div>Hello</div>`) - these are wrapped into a functional component.
+         * 2. Full React functional/class components (e.g., `function MyComponent() { ... }`).
+         *
+         * @param {object} props
+         * @param {string} props.jsxCode - The JSX/React component code as a string.
+         * @param {string} props.cssCode - The CSS code as a string.
+         */
+        function ComponentRenderer({ jsxCode, cssCode }) {
+            const [ComponentToRender, setComponentToRender] = useState(null);
+            const [error, setError] = useState(null);
+
+            useEffect(() => {
+                try {
+                    // Clear component and error if no JSX code is provided
+                    if (!jsxCode) {
+                        setComponentToRender(null);
+                        setError(null);
+                        return;
+                    }
+
+                    // --- Dynamic CSS Injection ---
+                    // Find or create a style tag for the generated CSS
+                    let styleTag = document.getElementById('generated-style');
+                    if (!styleTag) {
+                        styleTag = document.createElement('style');
+                        styleTag.id = 'generated-style';
+                        document.head.appendChild(styleTag);
+                    }
+                    // Update the content of the style tag with the new CSS
+                    styleTag.textContent = cssCode;
+
+                    // --- Dynamic Component Creation and Execution ---
+                    let componentSource = jsxCode;
+                    let transpiledCode;
+                    let FinalComponent = null;
+
+                    // Heuristic to detect if the input is likely a raw JSX fragment
+                    // (doesn't start with function/const/class and contains '<')
+                    const isRawJSX = !componentSource.trim().startsWith('function') &&
+                                     !componentSource.trim().startsWith('const') &&
+                                     !componentSource.trim().startsWith('class') &&
+                                     componentSource.trim().includes('<');
+
+                    if (isRawJSX) {
+                        // If it's raw JSX, wrap it into a functional component named 'GeneratedComponent'
+                        componentSource = `function GeneratedComponent() { return (${jsxCode}); }`;
+                    }
+
+                    // Transpile the (potentially wrapped) JSX/TSX code using Babel
+                    transpiledCode = Babel.transform(componentSource, {
+                        presets: ['react', 'es2015'], // Use React and ES2015 presets
+                        filename: 'generated-component.jsx' // Provide a filename for better error messages
+                    }).code;
+
+                    // Create a dynamic function (like a mini-module) that will execute the transpiled code.
+                    // This function takes `React` and `ReactDOM` as arguments, making them available
+                    // within the scope of the generated component's code.
+                    // It then attempts to return the component.
+                    const componentFactory = new Function('React', 'ReactDOM', `
+                        let component = null;
+                        try {
+                            // Execute the transpiled code within this isolated scope.
+                            // This code is expected to define a React component (e.g., function App() {}).
+                            ${transpiledCode};
+
+                            // Attempt to find the defined component by common names.
+                            // Prioritize 'GeneratedComponent' if raw JSX was wrapped.
+                            // Then look for 'App' (a common name for AI-generated root component).
+                            if (typeof GeneratedComponent !== 'undefined' && GeneratedComponent !== null) {
+                                component = GeneratedComponent;
+                            } else if (typeof App !== 'undefined' && App !== null) {
+                                component = App;
+                            } else {
+                                // If no known component name is found, it's an issue with AI output structure.
+                                throw new Error("Could not find a renderable React component (e.g., 'GeneratedComponent', 'App') in the generated code.");
+                            }
+                        } catch (execErr) {
+                            console.error("Error executing generated component code:", execErr);
+                            throw execErr; // Re-throw to be caught by the outer try/catch
+                        }
+                        return component; // Return the identified component
+                    `);
+
+                    // Execute the component factory to get the actual React component
+                    FinalComponent = componentFactory(React, ReactDOM);
+
+                    // Validate that a valid React component or element was obtained
+                    if (!FinalComponent || (typeof FinalComponent !== 'function' && !React.isValidElement(FinalComponent))) {
+                        throw new Error("Generated code did not produce a valid React component or element.");
+                    }
+
+                    // If the result is a React element (from raw JSX), wrap it in a functional component
+                    // so React can render it directly.
+                    if (React.isValidElement(FinalComponent)) {
+                        setComponentToRender(() => () => FinalComponent);
+                    } else {
+                        // Otherwise, it's a functional/class component, set it directly
+                        setComponentToRender(() => FinalComponent);
+                    }
+                    setError(null); // Clear any previous errors
+
+                } catch (err) {
+                    // Catch any errors during transpilation or component execution
+                    console.error("Sandbox Error:", err);
+                    setError("Error: Could not render component. Check console for details. " + err.message);
+                    setComponentToRender(null); // Clear the component on error
+                }
+            }, [jsxCode, cssCode]); // Re-run effect when jsxCode or cssCode changes
+
+            // --- Conditional Rendering of Component or Error/Placeholder ---
+            if (error) {
+                return (
+                    <div style={{ color: 'red', textAlign: 'center', padding: '20px', border: '1px solid red', borderRadius: '8px', margin: '20px', whiteSpace: 'pre-wrap' }}>
+                        Error rendering component:
+                        <br />
+                        {error}
+                    </div>
+                );
+            }
+
+            // Render the component if available, otherwise show a placeholder
+            return ComponentToRender ? createElement(ComponentToRender) : (
+                <div style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
+                    No component loaded. Generate one in the editor!
+                </div>
+            );
+        }
+
+        // --- Message Listener for Parent Window Communication ---
+        // This listens for messages from the parent window (your Next.js app)
+        // to receive the JSX and CSS code to render.
+        window.addEventListener('message', (event) => {
+            // IMPORTANT SECURITY NOTE: In a production application, always verify event.origin
+            // to prevent Cross-Site Scripting (XSS) attacks from untrusted domains.
+            // Example: if (event.origin !== 'http://your-parent-domain.com') return;
+
+            if (event.data.type === 'renderCode') {
+                const { jsx, css } = event.data;
+                // Get the root element where the React component will be mounted
+                const rootElement = document.getElementById('root');
+                // Create a React root (React 18 way)
+                const root = ReactDOM.createRoot(rootElement);
+                // Render the ComponentRenderer with the received code
+                root.render(<ComponentRenderer jsxCode={jsx} cssCode={css} />);
+            }
+        });
+
+        // --- Initial Render of the Sandbox ---
+        // Render a placeholder message when the iframe first loads,
+        // before any code is received from the parent.
+        const initialRoot = ReactDOM.createRoot(document.getElementById('root'));
+        initialRoot.render(
+            <div style={{ textAlign: 'center', color: '#666', padding: '20px' }}>
+                Waiting for component code...
+            </div>
+        );
+    </script>
+</body>
+</html>
