@@ -25,7 +25,18 @@ app.get('/', (req, res) => {
     res.send('Component Generator Backend API is running!');
 });
 
+
+const authRoutes = require('./routes/authRoutes');
+const projectRoutes = require('./routes/projectRoutes');
+
+
+// API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/projects', projectRoutes);
+
+
 // Start Server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
+
