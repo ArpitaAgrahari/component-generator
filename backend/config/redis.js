@@ -23,7 +23,6 @@ async function connectRedis() {
             console.log('Redis connected successfully!');
         } catch (err) {
             console.error('Failed to connect to Redis:', err);
-            // This error will now be more informative if it's a network issue to the cloud instance
         }
     } else {
         console.log('Redis connection already initiated or established.');
